@@ -1174,7 +1174,7 @@ static void nsvg__scanlineSolid(unsigned char* dst, int count, unsigned char* co
 static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, float scale, NSVGcachedPaint* cache, char fillRule)
 {
 	NSVGactiveEdge *active = NULL;
-	int y, s;
+	size_t y, s;
 	int e = 0;
 	int maxWeight = (255 / NSVG__SUBSAMPLES);  // weight per vertical scanline
 	int xmin, xmax;
@@ -1253,7 +1253,7 @@ static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, fl
 		if (xmin < 0) xmin = 0;
 		if (xmax > r->width-1) xmax = r->width-1;
 		if (xmin <= xmax) {
-			nsvg__scanlineSolid(&r->bitmap[y * r->stride] + xmin*4, xmax-xmin+1, &r->scanline[xmin], xmin, y, tx,ty, scale, cache);
+			nsvg__scanlineSolid(&r->bitmap[y * r->stride] + xmin*4, xmax-xmin+1, &r->scanline[xmin], xmin, (int)y, tx,ty, scale, cache);
 		}
 	}
 
@@ -1261,7 +1261,7 @@ static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, fl
 
 static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int stride)
 {
-	int x,y;
+	size_t x,y;
 
 	// Unpremultiply
 	for (y = 0; y < h; y++) {
@@ -1445,7 +1445,7 @@ void nsvgRasterize(NSVGrasterizer* r,
 	float xform[6];
 	NSVGedge *e = NULL;
 	NSVGcachedPaint cache;
-	int i;
+	size_t i;
 	float scalex = scale; // TODO
 	float scaley = scale; //
 
