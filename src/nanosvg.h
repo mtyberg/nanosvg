@@ -230,9 +230,9 @@ typedef struct NSVGSymbol
 } NSVGSymbol;
 
 // Parses SVG file from a file, returns SVG image as paths.
-NSVGimage* nsvgParseFromFile(const char* filename, const char* units, float dpi);
+NSVGimage* nsvgParseFromFile(const char* filename, const char* dir, const char* units, float dpi);
 
-NSVGimage* nsvgParseFromFileWithCSS(const char* filename, const char* styleCSS, const char* units, float dpi);
+NSVGimage* nsvgParseFromFileWithCSS(const char* filename, const char* dir, const char* styleCSS, const char* units, float dpi);
 
 // Parses SVG file from a null terminated string, returns SVG image as paths.
 // Important note: changes the string.
@@ -1349,7 +1349,6 @@ static float nsvg__convertToPixels(NSVGparser* p, NSVGcoordinate c, float orig, 
 		case NSVG_UNITS_PERCENT:	return orig + c.value / 100.0f * length;
 		default:					return c.value;
 	}
-	return c.value;
 }
 
 static NSVGgradientData* nsvg__findGradientData(NSVGparser* p, const char* id)
@@ -4646,7 +4645,7 @@ static void parsePattern(NSVGparser* p, const char** dict)
 {
 	NSVGattrib* attr = nsvg__getAttr(p);
 	int i;
-	float w, h;
+	float w = 0, h = 0;
 	NSVGpattern *pt;
 
 	for (i = 0; dict[i]; i += 2) {
