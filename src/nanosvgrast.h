@@ -1283,7 +1283,7 @@ static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int str
 		for (x = 0; x < w; x++) {
 			int r = 0, g = 0, b = 0, a = row[3], n = 0;
 			if (a == 0) {
-				if (x-1 > 0 && row[-1] != 0) {
+				if (x > 1 && row[-1] != 0) {
 					r += row[-4];
 					g += row[-3];
 					b += row[-2];
@@ -1295,7 +1295,7 @@ static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int str
 					b += row[6];
 					n++;
 				}
-				if (y-1 > 0 && row[-stride+3] != 0) {
+				if (y > 1 && row[-stride+3] != 0) {
 					r += row[-stride];
 					g += row[-stride+1];
 					b += row[-stride+2];
