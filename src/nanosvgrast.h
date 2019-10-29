@@ -78,6 +78,8 @@ void nsvgDeleteRasterizer(NSVGrasterizer*);
 
 #include <math.h>
 
+#include "nanosvgeg.h"
+
 #define NSVG__SUBSAMPLES	5
 #define NSVG__FIXSHIFT		10
 #define NSVG__FIX			(1 << NSVG__FIXSHIFT)
@@ -114,7 +116,9 @@ typedef struct NSVGmemPage {
 typedef struct NSVGcachedPaint {
 	char type;
 	char spread;
+	char pad[6];
 	float xform[6];
+	void *image;
 	unsigned int colors[256];
 } NSVGcachedPaint;
 
@@ -1109,13 +1113,68 @@ static void nsvg__scanlineSolid(unsigned char* dst, int count, unsigned char* co
 			dst += 4;
 			fx += dx;
 		}
+	} else if (cache->type == NSVG_PAINT_PATTERN) {
+		float fx, fy, dx, gx, gy;
+		float* t = cache->xform;
+		EG_IMAGE *Pattern = (EG_IMAGE *)cache->image;
+		if (!Pattern) {
+			return;
+		}
+		int Width = Pattern->Width;
+		int Height = Pattern->Height;
+
+		int i, cr, cg, cb, ca, ix, iy;
+		int j;
+		fx = (float)x;
+		fy = (float)y;
+		dx = 1.0f;
+
+		//    unsigned int c;
+		for (i = 0; i < count; i++) {
+		  int r, g, b, a, ia;
+		  gx = fx * t[0] + fy * t[2] + t[4];
+		  gy = fx * t[1] + fy * t[3] + t[5];
+		  ix = (int)(gx * Width) % Width;
+		  iy = (int)(gy * Height) % Height;
+
+		  j = iy * Width + ix;
+		  if (j < 0)
+			continue;
+
+		  cr = Pattern->PixelData[j].r;
+		  cb = Pattern->PixelData[j].b;
+		  cg = Pattern->PixelData[j].g;
+		  ca = Pattern->PixelData[j].a;
+		  a = nsvg__div255((int)cover[0] * ca);
+		  ia = 255 - a;
+
+		  // Premultiply
+		  r = nsvg__div255(cr * a);
+		  g = nsvg__div255(cg * a);
+		  b = nsvg__div255(cb * a);
+
+		  // Blend over
+		  r += nsvg__div255(ia * (int)dst[0]);
+		  g += nsvg__div255(ia * (int)dst[1]);
+		  b += nsvg__div255(ia * (int)dst[2]);
+		  a += nsvg__div255(ia * (int)dst[3]);
+
+		  dst[0] = (unsigned char)r;
+		  dst[1] = (unsigned char)g;
+		  dst[2] = (unsigned char)b;
+		  dst[3] = (unsigned char)a;
+
+		  cover++;
+		  dst += 4;
+		  fx += dx;
+		}
 	}
 }
 
 static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, float scale, NSVGcachedPaint* cache, char fillRule)
 {
 	NSVGactiveEdge *active = NULL;
-	int y, s;
+	size_t y, s;
 	int e = 0;
 	int maxWeight = (255 / NSVG__SUBSAMPLES);  // weight per vertical scanline
 	int xmin, xmax;
@@ -1194,7 +1253,7 @@ static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, fl
 		if (xmin < 0) xmin = 0;
 		if (xmax > r->width-1) xmax = r->width-1;
 		if (xmin <= xmax) {
-			nsvg__scanlineSolid(&r->bitmap[y * r->stride] + xmin*4, xmax-xmin+1, &r->scanline[xmin], xmin, y, tx,ty, scale, cache);
+			nsvg__scanlineSolid(&r->bitmap[y * r->stride] + xmin*4, xmax-xmin+1, &r->scanline[xmin], xmin, (int)y, tx,ty, scale, cache);
 		}
 	}
 
@@ -1202,7 +1261,7 @@ static void nsvg__rasterizeSortedEdges(NSVGrasterizer *r, float tx, float ty, fl
 
 static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int stride)
 {
-	int x,y;
+	size_t x,y;
 
 	// Unpremultiply
 	for (y = 0; y < h; y++) {
@@ -1224,7 +1283,7 @@ static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int str
 		for (x = 0; x < w; x++) {
 			int r = 0, g = 0, b = 0, a = row[3], n = 0;
 			if (a == 0) {
-				if (x-1 > 0 && row[-1] != 0) {
+				if (x > 1 && row[-1] != 0) {
 					r += row[-4];
 					g += row[-3];
 					b += row[-2];
@@ -1236,7 +1295,7 @@ static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int str
 					b += row[6];
 					n++;
 				}
-				if (y-1 > 0 && row[-stride+3] != 0) {
+				if (y > 1 && row[-stride+3] != 0) {
 					r += row[-stride];
 					g += row[-stride+1];
 					b += row[-stride+2];
@@ -1260,7 +1319,7 @@ static void nsvg__unpremultiplyAlpha(unsigned char* image, int w, int h, int str
 }
 
 
-static void nsvg__initPaint(NSVGcachedPaint* cache, NSVGpaint* paint, float opacity)
+static void nsvg__initPaint(NSVGcachedPaint* cache, NSVGpaint* paint, NSVGshape* shape, float *xformShape, float opacity)
 {
 	int i, j;
 	NSVGgradient* grad;
@@ -1273,6 +1332,22 @@ static void nsvg__initPaint(NSVGcachedPaint* cache, NSVGpaint* paint, float opac
 	}
 
 	grad = paint->gradient;
+
+	if (cache->type == NSVG_PAINT_PATTERN) {
+		cache->colors[0] = nsvg__applyOpacity(0, opacity);
+		if (grad) {
+			cache->image = ((NSVGpattern*)grad)->image;
+		}
+		float xform[6];
+		nsvg__xformIdentity(xform);
+		xform[0] = shape->bounds[2] - shape->bounds[0];
+		xform[3] = shape->bounds[3] - shape->bounds[1];
+		xform[4] = shape->bounds[0];
+		xform[5] = shape->bounds[1];
+		nsvg__xformMultiply(xform, xformShape);
+		nsvg__xformInverse(cache->xform, xform);
+		return;
+	}
 
 	cache->spread = grad->spread;
 	memcpy(cache->xform, grad->xform, sizeof(float)*6);
@@ -1367,9 +1442,14 @@ void nsvgRasterize(NSVGrasterizer* r,
 				   unsigned char* dst, int w, int h, int stride)
 {
 	NSVGshape *shape = NULL;
+	float xform[6];
 	NSVGedge *e = NULL;
 	NSVGcachedPaint cache;
-	int i;
+	size_t i;
+	float scalex = scale; // TODO
+	float scaley = scale; //
+
+	memset(&cache, 0, sizeof(NSVGcachedPaint));
 
 	r->bitmap = dst;
 	r->width = w;
@@ -1388,6 +1468,14 @@ void nsvgRasterize(NSVGrasterizer* r,
 	for (shape = image->shapes; shape != NULL; shape = shape->next) {
 		if (!(shape->flags & NSVG_FLAGS_VISIBLE))
 			continue;
+
+		memcpy(&xform[0], shape->xform, sizeof(float) * 6);
+		xform[0] *= scalex;
+		xform[1] *= scaley;
+		xform[2] *= scalex;
+		xform[3] *= scaley;
+		xform[4] = xform[4] * scalex + tx;
+		xform[5] = xform[5] * scaley + ty;
 
 		if (shape->fill.type != NSVG_PAINT_NONE) {
 			nsvg__resetPool(r);
@@ -1409,7 +1497,7 @@ void nsvgRasterize(NSVGrasterizer* r,
 			qsort(r->edges, r->nedges, sizeof(NSVGedge), nsvg__cmpEdge);
 
 			// now, traverse the scanlines and find the intersections on each scanline, use non-zero rule
-			nsvg__initPaint(&cache, &shape->fill, shape->opacity);
+			nsvg__initPaint(&cache, &shape->fill, shape, &xform[0], shape->opacity);
 
 			nsvg__rasterizeSortedEdges(r, tx,ty,scale, &cache, shape->fillRule);
 		}
@@ -1435,7 +1523,7 @@ void nsvgRasterize(NSVGrasterizer* r,
 			qsort(r->edges, r->nedges, sizeof(NSVGedge), nsvg__cmpEdge);
 
 			// now, traverse the scanlines and find the intersections on each scanline, use non-zero rule
-			nsvg__initPaint(&cache, &shape->stroke, shape->opacity);
+			nsvg__initPaint(&cache, &shape->stroke, shape, &xform[0], shape->opacity);
 
 			nsvg__rasterizeSortedEdges(r, tx,ty,scale, &cache, NSVG_FILLRULE_NONZERO);
 		}
